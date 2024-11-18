@@ -582,17 +582,34 @@ class ARMATURE_OT_translate_jp_bones(Operator):
         # Perform the translation
         bones = armature.data.bones
         translated_count = 0
+        skipped_count = 0
+        online_count = 0
+        fallback_count = 0
         
         # Create a list of bones to rename
         bones_to_rename = []
         for bone in bones:
-            new_name = translate_japanese_name(
-                bone.name,
-                use_online=props.use_online_translation,
-                timeout=props.translation_timeout
-            )
-            if new_name != bone.name:
-                bones_to_rename.append((bone, new_name))
+            try:
+                # Try online translation first if enabled
+                new_name = translate_japanese_name(
+                    bone.name,
+                    use_online=props.use_online_translation,
+                    timeout=props.translation_timeout
+                )
+                
+                if new_name != bone.name:
+                    bones_to_rename.append((bone, new_name))
+                    if new_name != clean_bone_name(bone.name):  # If actual translation occurred
+                        if props.use_online_translation and GOOGLE_TRANSLATE_AVAILABLE:
+                            online_count += 1
+                        else:
+                            fallback_count += 1
+                else:
+                    skipped_count += 1
+                    
+            except Exception as e:
+                self.report({'WARNING'}, f"Failed to process {bone.name}: {str(e)}")
+                skipped_count += 1
         
         # Perform the renaming
         for bone, new_name in bones_to_rename:
@@ -601,11 +618,28 @@ class ARMATURE_OT_translate_jp_bones(Operator):
                 translated_count += 1
             except Exception as e:
                 self.report({'WARNING'}, f"Failed to rename {bone.name}: {str(e)}")
+                skipped_count += 1
         
+        # Create detailed success message
         if translated_count > 0:
-            self.report({'INFO'}, f"Translated {translated_count} bone names")
+            message = f"Successfully renamed {translated_count} bones:\n"
+            if props.use_online_translation and GOOGLE_TRANSLATE_AVAILABLE:
+                message += f"• {online_count} bones translated online\n"
+                message += f"• {fallback_count} bones translated using dictionary"
+            else:
+                message += f"• {fallback_count} bones translated using dictionary"
+            
+            if skipped_count > 0:
+                message += f"\n• {skipped_count} bones skipped (non-Japanese or errors)"
+                
+            self.report({'INFO'}, message)
+            show_message(message, "Translation Complete", 'INFO')
         else:
-            self.report({'INFO'}, "No Japanese bone names found to translate")
+            message = "No Japanese bone names found to translate"
+            if skipped_count > 0:
+                message += f"\n{skipped_count} bones were analyzed but didn't need translation"
+            self.report({'INFO'}, message)
+            show_message(message, "Translation Complete", 'INFO')
             
         return {'FINISHED'}
 
