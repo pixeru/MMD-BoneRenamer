@@ -1,7 +1,17 @@
 import bpy
+import threading
+import time
+from functools import lru_cache
+from typing import Tuple, List, Dict
 from bpy.types import Panel, Operator, PropertyGroup
-from bpy.props import StringProperty, BoolProperty, EnumProperty
-from typing import Tuple, List
+from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty
+
+try:
+    from googletrans import Translator
+    GOOGLE_TRANSLATE_AVAILABLE = True
+except ImportError:
+    GOOGLE_TRANSLATE_AVAILABLE = False
+    print("GoogleTrans not available. Install using: pip install googletrans==3.1.0a0")
 
 # Type definitions for better code clarity
 BoneMapping = Tuple[str, ...]
@@ -216,6 +226,132 @@ def show_message(message: str, title: str = "Message", icon: str = 'INFO'):
         self.layout.label(text=message)
     bpy.context.window_manager.popup_menu(draw, title=title, icon=icon)
 
+JP_BONE_MAPPING = {
+    # Basic body parts
+    "全ての親": "root",
+    "センター": "center",
+    "グルーブ": "groove",
+    "親": "parent",
+    "腰": "waist",
+    "上半身": "upper body",
+    "下半身": "lower body",
+    "首": "neck",
+    "頭": "head",
+    "目": "eye",
+    "両目": "eyes",
+    "顔": "face",
+    "あご": "jaw",
+    "顎": "jaw",
+    "舌": "tongue",
+    "歯": "teeth",
+    "髪": "hair",
+    "胸": "chest",
+    
+    # Arms and hands
+    "肩": "shoulder",
+    "腕": "arm",
+    "ひじ": "elbow",
+    "手首": "wrist",
+    "手": "hand",
+    "親指": "thumb",
+    "人指": "fore",
+    "中指": "middle",
+    "薬指": "third",
+    "小指": "little",
+    
+    # Legs and feet
+    "足": "leg",
+    "ひざ": "knee",
+    "足首": "ankle",
+    "つま先": "toe",
+    
+    # Clothing and accessories
+    "スカート": "skirt",
+    "パンツ": "pants",
+    "リボン": "ribbon",
+    "紐": "string",
+    "服": "clothes",
+    "襟": "collar",
+    "袖": "sleeve",
+    
+    # Hair parts
+    "前髪": "front hair",
+    "後髪": "back hair",
+    "横髪": "side hair",
+    "もみあげ": "sideburn",
+    "アホ毛": "ahoge",
+    
+    # Directional terms
+    "右": "right",
+    "左": "left",
+    "前": "front",
+    "後ろ": "back",
+    "中": "middle",
+    "上": "upper",
+    "下": "lower",
+    "先": "tip",
+    
+    # Additional terms
+    "補助": "auxiliary",
+    "調整": "adjustment",
+    "基": "base",
+    "戻": "return",
+    "操作": "control",
+    "軸": "axis",
+    "捩": "twist",
+    "回転": "rotation",
+    "ダミー": "dummy",
+    "パーツ": "parts",
+    
+    # MMD specific
+    "ＩＫ": "IK",
+    "エクステ": "extension",
+}
+
+class TranslationCache:
+    """Thread-safe translation cache"""
+    def __init__(self):
+        self._cache = {}
+        self._lock = threading.Lock()
+    
+    def get(self, key):
+        with self._lock:
+            return self._cache.get(key)
+    
+    def set(self, key, value):
+        with self._lock:
+            self._cache[key] = value
+
+# Global translation cache
+translation_cache = TranslationCache()
+
+class AsyncTranslator:
+    """Handles asynchronous translation requests"""
+    def __init__(self):
+        self.translator = Translator()
+        self.timeout = 2.0  # Translation timeout in seconds
+        
+    @lru_cache(maxsize=1000)
+    def translate_text(self, text: str, src='ja', dest='en') -> str:
+        """Translate text with caching and timeout"""
+        try:
+            # Check cache first
+            cached = translation_cache.get(text)
+            if cached:
+                return cached
+            
+            # Attempt translation
+            translation = self.translator.translate(text, src=src, dest=dest)
+            result = translation.text.lower()  # Convert to lowercase for consistency
+            
+            # Cache the result
+            translation_cache.set(text, result)
+            
+            return result
+        except Exception as e:
+            print(f"Translation error: {str(e)}")
+            return None
+
 class BoneRenamerProperties(PropertyGroup):
     source_object: StringProperty(
         name="Source Object",
@@ -226,19 +362,47 @@ class BoneRenamerProperties(PropertyGroup):
         items=BONE_MAPS,
         name="Source Format",
         description="Current bone naming format",
-        default='mmd_english'
+        default='mmd_japanese'
     )
     target_format: EnumProperty(
         items=BONE_MAPS,
         name="Target Format",
         description="Desired bone naming format",
-        default='blender_rigify'
+        default='mmd_english'
     )
     include_fingers: BoolProperty(
         name="Include Fingers",
         description="Also rename finger bones",
         default=True
     )
+    use_online_translation: BoolProperty(
+        name="Use Online Translation",
+        description="Use Google Translate for unknown Japanese terms (requires internet)",
+        default=True
+    )
+    translation_timeout: FloatProperty(
+        name="Translation Timeout",
+        description="Seconds to wait for online translation before falling back to static dictionary",
+        default=2.0,
+        min=0.1,
+        max=10.0
+    )
+
+def clean_bone_name(name: str) -> str:
+    """Clean up bone names to be more Blender-friendly"""
+    # Remove illegal characters and spaces
+    cleaned = "".join(c for c in name if c.isalnum() or c in "._-")
+    # Ensure name starts with a letter
+    if cleaned and not cleaned[0].isalpha():
+        cleaned = "bone_" + cleaned
+    return cleaned
+
+def extract_lr_suffix(name: str) -> Tuple[str, str]:
+    """Extract left/right suffix from bone name"""
+    for suffix in ['.L', '.R', '_L', '_R', '.l', '.r', '_l', '_r']:
+        if name.endswith(suffix):
+            return name[:-len(suffix)], suffix
+    return name, ""
 
 class ARMATURE_OT_rename_bones(Operator):
     bl_idname = "armature.rename_bones"
@@ -251,18 +415,15 @@ class ARMATURE_OT_rename_bones(Operator):
         # Get the armature
         armature = bpy.data.objects.get(props.source_object)
         if not armature:
-            show_message("Please select a valid armature!", "Error", 'ERROR')
+            self.report({'ERROR'}, "Please select a valid armature!")
             return {'CANCELLED'}
-            
-        if armature.type != 'ARMATURE':
-            show_message("Selected object is not an armature!", "Error", 'ERROR')
-            return {'CANCELLED'}
-
-        # Ensure we're in object mode
-        if context.active_object and context.active_object.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
         
-        # Perform the renaming
+        if props.source_format == 'mmd_japanese' and props.target_format == 'mmd_english':
+            # Use the Japanese to English translation
+            bpy.ops.armature.translate_jp_bones()
+            return {'FINISHED'}
+        
+        # Otherwise use the original bone mapping logic
         try:
             renamed_count = self.rename_bones(
                 armature, 
@@ -270,10 +431,10 @@ class ARMATURE_OT_rename_bones(Operator):
                 props.target_format, 
                 props.include_fingers
             )
-            show_message(f"Successfully renamed {renamed_count} bones", "Success", 'INFO')
+            self.report({'INFO'}, f"Successfully renamed {renamed_count} bones")
             return {'FINISHED'}
         except Exception as e:
-            show_message(str(e), "Error", 'ERROR')
+            self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
     
     def rename_bones(self, armature, source_format: str, target_format: str, include_fingers: bool) -> int:
@@ -359,6 +520,47 @@ class ARMATURE_OT_toggle_names(Operator):
             
         return {'FINISHED'}
 
+def translate_japanese_name(bone_name: str, use_online: bool = True, timeout: float = 2.0) -> str:
+    """
+    Translate Japanese bone name to English using multiple methods
+    
+    Args:
+        bone_name (str): The bone name to translate
+        use_online (bool): Whether to attempt online translation
+        timeout (float): Maximum time to wait for online translation
+        
+    Returns:
+        str: The translated bone name
+    """
+    base_name, suffix = extract_lr_suffix(bone_name)
+    translated_name = base_name
+    
+    # Try online translation first if enabled
+    if use_online and GOOGLE_TRANSLATE_AVAILABLE:
+        try:
+            translator = AsyncTranslator()
+            translator.timeout = timeout
+            online_translation = translator.translate_text(base_name)
+            if online_translation:
+                translated_name = online_translation
+        except Exception as e:
+            print(f"Online translation failed: {str(e)}")
+    
+    # Fallback to static dictionary if needed
+    if translated_name == base_name:
+        for jp, en in sorted(JP_BONE_MAPPING.items(), key=lambda x: len(x[0]), reverse=True):
+            if jp in translated_name:
+                translated_name = translated_name.replace(jp, en)
+    
+    # Clean up the translation
+    translated_name = clean_bone_name(translated_name)
+    
+    # Reattach suffix if it existed
+    if suffix:
+        translated_name += suffix
+    
+    return translated_name
+
 class ARMATURE_OT_translate_jp_bones(Operator):
     bl_idname = "armature.translate_jp_bones"
     bl_label = "Translate Japanese Names"
@@ -369,14 +571,10 @@ class ARMATURE_OT_translate_jp_bones(Operator):
         
         # Get the armature
         armature = bpy.data.objects.get(props.source_object)
-        if not armature:
-            show_message("Please select a valid armature!", "Error", 'ERROR')
+        if not armature or armature.type != 'ARMATURE':
+            self.report({'ERROR'}, "Please select a valid armature!")
             return {'CANCELLED'}
-            
-        if armature.type != 'ARMATURE':
-            show_message("Selected object is not an armature!", "Error", 'ERROR')
-            return {'CANCELLED'}
-
+        
         # Ensure we're in object mode
         if context.active_object and context.active_object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -385,20 +583,29 @@ class ARMATURE_OT_translate_jp_bones(Operator):
         bones = armature.data.bones
         translated_count = 0
         
+        # Create a list of bones to rename
+        bones_to_rename = []
         for bone in bones:
-            # First try exact match
-            for jp, en in JP_TO_EN_MAPPING:
-                if jp in bone.name:
-                    new_name = bone.name.replace(jp, en)
-                    if new_name != bone.name:
-                        bone.name = new_name
-                        translated_count += 1
-                        break
+            new_name = translate_japanese_name(
+                bone.name,
+                use_online=props.use_online_translation,
+                timeout=props.translation_timeout
+            )
+            if new_name != bone.name:
+                bones_to_rename.append((bone, new_name))
+        
+        # Perform the renaming
+        for bone, new_name in bones_to_rename:
+            try:
+                bone.name = new_name
+                translated_count += 1
+            except Exception as e:
+                self.report({'WARNING'}, f"Failed to rename {bone.name}: {str(e)}")
         
         if translated_count > 0:
-            show_message(f"Translated {translated_count} bone names", "Success", 'INFO')
+            self.report({'INFO'}, f"Translated {translated_count} bone names")
         else:
-            show_message("No Japanese bone names found to translate", "Info", 'INFO')
+            self.report({'INFO'}, "No Japanese bone names found to translate")
             
         return {'FINISHED'}
 
@@ -419,8 +626,12 @@ class VIEW3D_PT_bone_renamer(Panel):
         row.prop(props, "source_object", text="")
         row.operator("armature.pick_source", text="", icon='EYEDROPPER')
         
-        # Display toggle button
-        box.operator("armature.toggle_names", icon='HIDE_OFF')
+        # Translation options
+        box = layout.box()
+        box.label(text="Translation Options:")
+        box.prop(props, "use_online_translation")
+        if props.use_online_translation:
+            box.prop(props, "translation_timeout")
         
         # Format selection
         box = layout.box()
@@ -433,11 +644,10 @@ class VIEW3D_PT_bone_renamer(Panel):
         box.label(text="Options:")
         box.prop(props, "include_fingers")
         
-        # Rename button
-        layout.operator("armature.rename_bones", icon='OUTLINER_OB_ARMATURE')
-        
-        # Japanese translation button
-        layout.operator("armature.translate_jp_bones", icon='FILE_REFRESH')
+        # Action buttons
+        col = layout.column(align=True)
+        col.operator("armature.rename_bones", icon='OUTLINER_OB_ARMATURE')
+        col.operator("armature.translate_jp_bones", icon='FILE_REFRESH')
 
 classes = (
     BoneRenamerProperties,
