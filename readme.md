@@ -1,4 +1,7 @@
 # MMD Bone Renamer
+
+![MMD Bone Renamer Interface](screenshot.png)
+
 A Blender addon that translates Japanese MMD (MikuMikuDance) bone names to English using both Google Translate and a static dictionary.
 
 > ⚠️ **IMPORTANT:** Currently, only the MMD Japanese to MMD English conversion has been thoroughly tested and verified. Other format conversions are experimental and may not work as expected.
