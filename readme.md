@@ -1,13 +1,18 @@
 # MMD Bone Renamer
 
-A Blender addon that automatically renames bones between different naming conventions, with special support for translating Japanese MMD (MikuMikuDance) bone names to English using both Google Translate and a static dictionary.
+A Blender addon that translates Japanese MMD (MikuMikuDance) bone names to English using both Google Translate and a static dictionary.
+
+> ⚠️ **IMPORTANT:** Currently, only the Japanese MMD to English MMD conversion has been thoroughly tested and verified. Other format conversions are experimental and may not work as expected.
 
 ## Features
 
-- Convert between multiple bone naming formats:
-  - MMD English
-  - MMD Japanese
-  - MMD Japanese L/R
+- Reliable conversion from Japanese MMD bone names to English MMD format using:
+  - Online Google Translate (optional)
+  - Built-in static dictionary
+  - Intelligent L/R suffix handling
+  - Configurable translation timeout
+
+- Experimental support for other formats (untested):
   - XNALara
   - DAZ/Poser
   - Blender Rigify
@@ -16,12 +21,6 @@ A Blender addon that automatically renames bones between different naming conven
   - 3ds Max
   - Type X
   - BEPu
-
-- Japanese to English translation using:
-  - Online Google Translate (optional)
-  - Built-in static dictionary
-  - Intelligent L/R suffix handling
-  - Configurable translation timeout
 
 - Additional Features:
   - Optional finger bone renaming
@@ -48,7 +47,9 @@ pip install googletrans==3.1.0a0
 1. Open the Animation tab in the 3D Viewport's sidebar (press N if hidden)
 2. Find the "Bone Renamer" panel
 3. Select your armature using the picker or dropdown
-4. Choose source and target formats
+4. For best results, use:
+   - Source Format: "MMD Japanese"
+   - Target Format: "MMD English"
 5. Configure options:
    - Include fingers
    - Use online translation (if available)
@@ -57,7 +58,7 @@ pip install googletrans==3.1.0a0
 
 ## Options
 
-- **Source/Target Format**: Choose between different naming conventions
+- **Source/Target Format**: Choose between different naming conventions (Japanese to English MMD recommended)
 - **Include Fingers**: Toggle finger bone renaming
 - **Use Online Translation**: Enable Google Translate for unknown Japanese terms
 - **Translation Timeout**: Maximum wait time for online translation
@@ -78,13 +79,15 @@ pip install googletrans==3.1.0a0
 
 ## Known Limitations
 
+- Only Japanese MMD to English MMD conversion has been thoroughly tested
+- Other format conversions are experimental and may not work correctly
 - Online translation requires additional package installation
 - Some very specific or custom bone names may not be recognized
 - Complex bone hierarchies might need manual adjustment after renaming
 
 ## Contributing
 
-Feel free to submit issues, fork the repository, and create pull requests for any improvements.
+Feel free to submit issues, fork the repository, and create pull requests for any improvements. Help with testing and verifying other format conversions would be particularly welcome.
 
 ## License
 
